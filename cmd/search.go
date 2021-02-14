@@ -17,8 +17,11 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/manifoldco/promptui"
 	"log"
+
+	"github.com/manifoldco/promptui"
+	"github.com/pkg/errors"
+	"github.com/tmicheletto/zen/internal/search"
 
 	"github.com/spf13/cobra"
 )
@@ -34,17 +37,57 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		prompt := promptui.Select{
+		searchTypePrompt := promptui.Select{
 			Label: "What would you like to search for?",
-			Items: []string{"Users", "Tickets", "Organisations"},
+			Items: []string{search.USER_SEARCH, search.TICKET_SEARCH, search.ORGANIZATION_SEARCH},
 		}
-
-		_, result, err := prompt.Run()
+		_, searchType, err := searchTypePrompt.Run()
 
 		if err != nil {
 			log.Fatal("Prompt failed %v\n", err)
+			return
 		}
-		fmt.Printf("Choice: %s\n", result)
+
+		svc, err := search.NewSearchService(searchType)
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+
+		validate := func(input string) error {
+			if len(input) == 0 {
+				return errors.New("You must enter a value")
+			}
+			return nil
+		}
+
+		searchTermPrompt := promptui.Prompt{
+			Label:    "Search term",
+			Validate: validate,
+		}
+
+		searchTerm, err := searchTermPrompt.Run()
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+
+		searchValuePrompt := promptui.Prompt{
+			Label:    "Search value",
+			Validate: validate,
+		}
+		searchValue, err := searchValuePrompt.Run()
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+
+		result, err := svc.Search(searchTerm, searchValue)
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+		fmt.Println(result)
 	},
 }
 
