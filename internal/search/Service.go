@@ -4,35 +4,34 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/pkg/errors"
-	"io/ioutil"
-	"os"
 	"strings"
 
 	"github.com/blevesearch/bleve"
 )
 
 const (
-	USER_SEARCH = "Users"
+	USER_SEARCH         = "Users"
 	ORGANIZATION_SEARCH = "Organizations"
-	TICKET_SEARCH = "Tickets"
+	TICKET_SEARCH       = "Tickets"
 )
+
+type FileService interface {
+	ReadFile(fileName string) ([]byte, error)
+}
 
 type Service struct {
 	index bleve.Index
+	fs    FileService
 }
 
-func NewSearchService(searchType string) (*Service, error) {
-	index, err := openIndex(searchType)
-	if err != nil {
-		return nil, err
-	}
+func New(fs FileService) *Service {
 	svc := &Service{
-		index: index,
+		fs: fs,
 	}
-	return svc, nil
+	return svc
 }
 
-func unmarshallJson(searchType string) ([]map[string]interface{}, error) {
+func (svc *Service) unmarshallJson(searchType string) ([]map[string]interface{}, error) {
 	var fileName string
 
 	switch searchType {
@@ -49,61 +48,36 @@ func unmarshallJson(searchType string) ([]map[string]interface{}, error) {
 		return nil, errors.Errorf("Unsupported search type: %s", searchType)
 	}
 
-
-	jsonFile, err := os.Open(fileName)
+	jsonBytes, err := svc.fs.ReadFile(fileName)
 	if err != nil {
 		return nil, err
 	}
-	defer jsonFile.Close()
-
-	byteValue, _ := ioutil.ReadAll(jsonFile)
 
 	s := make([]map[string]interface{}, 0)
 
-	err = json.Unmarshal(byteValue, &s)
+	err = json.Unmarshal(jsonBytes, &s)
 	if err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-func openIndex(searchType string) (bleve.Index, error) {
-	var indexFile string
-
-	switch searchType {
-	case USER_SEARCH:
-		indexFile = "./data/idx/users.idx"
-		break
-	case ORGANIZATION_SEARCH:
-		indexFile = "./data/idx/organizations.idx"
-		break
-	case TICKET_SEARCH:
-		indexFile = "./data/idx/tickets.idx"
-		break
-	default:
-		return nil, errors.Errorf("Unsupported search type: %s", searchType)
-	}
-
-	index, err := bleve.Open(indexFile)
-	if err == nil {
-		return index, nil
-	}
-
-	s, err := unmarshallJson(searchType)
+func (svc *Service) Init(searchType string) error {
+	s, err := svc.unmarshallJson(searchType)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	mapping := bleve.NewIndexMapping()
-	index, err = bleve.New(indexFile, mapping)
+	svc.index, err = bleve.NewMemOnly(mapping)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	for _, m := range s {
-		index.Index(fmt.Sprintf("%s", m["_id"]), m)
+		svc.index.Index(fmt.Sprintf("%s", m["_id"]), m)
 	}
-	return index, nil
+	return nil
 }
 
 func (svc *Service) Search(searchTerm string, searchValue string) (string, error) {
@@ -118,7 +92,7 @@ func (svc *Service) Search(searchTerm string, searchValue string) (string, error
 	result := make([]string, 0)
 	if len(searchResult.Hits) > 0 {
 		for k, v := range searchResult.Hits[0].Fields {
-			result = append(result, fmt.Sprintf("%s		%v", k, v))
+			result = append(result, fmt.Sprintf("%s=%v", k, v))
 		}
 	} else {
 		result = append(result, "No results found")

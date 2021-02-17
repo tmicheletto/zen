@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
 
 	"github.com/manifoldco/promptui"
@@ -25,6 +26,12 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+type FileService struct{}
+
+func (svc *FileService) ReadFile(fileName string) ([]byte, error) {
+	return ioutil.ReadFile(fileName)
+}
 
 // searchCmd represents the search command
 var searchCmd = &cobra.Command{
@@ -37,18 +44,20 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		fs := &FileService{}
+		svc := search.New(fs)
+
 		searchTypePrompt := promptui.Select{
 			Label: "What would you like to search for?",
 			Items: []string{search.USER_SEARCH, search.TICKET_SEARCH, search.ORGANIZATION_SEARCH},
 		}
 		_, searchType, err := searchTypePrompt.Run()
-
 		if err != nil {
 			log.Fatal("Prompt failed %v\n", err)
 			return
 		}
 
-		svc, err := search.NewSearchService(searchType)
+		err = svc.Init(searchType)
 		if err != nil {
 			log.Fatal(err)
 			return
