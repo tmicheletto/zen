@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"github.com/blevesearch/bleve"
 	"github.com/blevesearch/bleve/analysis/analyzer/keyword"
-	"github.com/blevesearch/bleve/mapping"
 	"github.com/google/uuid"
+	"github.com/prometheus/common/log"
 	"strconv"
 )
 
 type Type string
-
 const (
 	USER_SEARCH         Type = "Users"
 	ORGANIZATION_SEARCH Type = "Organizations"
@@ -18,19 +17,42 @@ const (
 )
 
 type DocType string
-
 const (
 	USER_DOC_TYPE         DocType = "user"
 	ORGANIZATION_DOC_TYPE DocType = "organization"
 	TICKET_DOC_TYPE       DocType = "ticket"
 )
 
-var USER_FIELDS = [...]string{"_id", "url", "email", "external_id", "tags", "created_at", "name", "organization_id", "phone", "signature", "alias", "active", "verified", "shared", "locale", "timezone", "last_login_at", "suspended", "role"}
+var USER_FIELDS = [...]string{"_id", "url", "email", "external_id", "tags", "created_at", "name", "organization_id", "organizations", "phone", "signature", "alias", "active", "verified", "shared", "locale", "timezone", "last_login_at", "suspended", "role"}
 var ORGANIZATION_FIELDS = [...]string{"_id", "url", "external_id", "tags", "created_at", "name", "domain_names", "details", "shared_tickets"}
 var TICKET_FIELDS = [...]string{"_id", "url", "external_id", "tags", "created_at", "type", "subject", "description", "priority", "status", "submitter_id", "assignee_id", "organization_id", "has_incidents", "due_at", "via"}
 
 type FileService interface {
 	ReadFile(fileName string) ([]byte, error)
+}
+
+type User struct {
+	Id json.Number `json:"_id"`
+	Name string `json:"name"`
+	DocType DocType `json:"doc_type"`
+	OrganizationId json.Number `json:"organization_id"`
+	Organization Organization `json:"organization"`
+	SubmittedTickets []Ticket `json:"submitted_tickets"`
+}
+
+type Organization struct {
+	Id json.Number `json:"_id"`
+	Name string `json:"name"`
+	Users []User `json:"users"`
+	DocType DocType `json:"doc_type"`
+	Tickets []Ticket `json:"tickets"`
+}
+
+type Ticket struct {
+	Id string `json:"_id"`
+	DocType DocType `json:"doc_type"`
+	Submitter User `json:"submitter"`
+	Organization Organization `json:"organization"`
 }
 
 type Service struct {
@@ -49,28 +71,80 @@ func New(fs FileService) *Service {
 func (svc *Service) Init(searchType Type) error {
 	svc.searchType = searchType
 
+	users, err := svc.unmarshalUsers()
+	if err != nil {
+		return err
+	}
+
+	orgs, err := svc.unmarshalOrganizations()
+	if err != nil {
+		return err
+	}
+
+	tickets, err := svc.unmarshalTickets()
+	if err != nil {
+		return err
+	}
+
+	if err = svc.buildIndex(users, orgs, tickets); err != nil {
+		return err
+	}
+	return nil
+}
+
+func(svc *Service) buildIndex(users []User, organizations []Organization, tickets []Ticket) error {
 	indexMapping := bleve.NewIndexMapping()
 	indexMapping.TypeField = "doc_type"
 	indexMapping.DefaultAnalyzer = "en"
+
+	keywordMapping := bleve.NewTextFieldMapping()
+	keywordMapping.Analyzer = keyword.Name
+
+	textFieldMapping := bleve.NewTextFieldMapping()
+	textFieldMapping.Analyzer = "en"
+
+	userMapping := bleve.NewDocumentMapping()
+	for _, f := range USER_FIELDS {
+		userMapping.AddFieldMappingsAt(f, textFieldMapping)
+	}
+
+	orgMapping := bleve.NewDocumentMapping()
+	for _, f := range ORGANIZATION_FIELDS {
+		orgMapping.AddFieldMappingsAt(f, textFieldMapping)
+	}
+
+	ticketMapping := bleve.NewDocumentMapping()
+	for _, f := range TICKET_FIELDS {
+		ticketMapping.AddFieldMappingsAt(f, textFieldMapping)
+	}
+
+	userMapping.AddSubDocumentMapping("organization", orgMapping)
+
+	indexMapping.AddDocumentMapping("user", userMapping)
+	indexMapping.AddDocumentMapping("organization", orgMapping)
+	indexMapping.AddDocumentMapping("ticket", ticketMapping)
 
 	index, err := bleve.NewMemOnly(indexMapping)
 	if err != nil {
 		return err
 	}
 
-	index, err = svc.buildUserIndex(index, indexMapping)
-	if err != nil {
-		return err
+	for _, user := range users {
+		user = buildUserGraph(user, organizations, tickets)
+		log.Info(user.Organization)
+		user.DocType = "user"
+
+		index.Index(uuid.NewString(), user)
 	}
 
-	index, err = svc.buildOrganizationIndex(index, indexMapping)
-	if err != nil {
-		return err
+	for _, org := range organizations {
+		org.DocType = "organization"
+		index.Index(uuid.NewString(), org)
 	}
 
-	index, err = svc.buildTicketIndex(index, indexMapping)
-	if err != nil {
-		return err
+	for _, ticket := range tickets {
+		ticket.DocType = "ticket"
+		index.Index(uuid.NewString(), ticket)
 	}
 	svc.index = index
 	return nil
@@ -81,6 +155,7 @@ func (svc *Service) Search(searchTerm string, searchValue string) ([]map[string]
 	query.SetField(searchTerm)
 	searchRequest := bleve.NewSearchRequest(query)
 	searchRequest.Fields = []string{"*"}
+	searchRequest.IncludeLocations = true
 	searchResult, err := svc.index.Search(searchRequest)
 	if err != nil {
 		return nil, err
@@ -104,6 +179,7 @@ func (svc *Service) Search(searchTerm string, searchValue string) ([]map[string]
 			//for i, t := range tickets {
 			//	result.Fields[fmt.Sprintf("ticket_%v", i)] = t["subject"]
 			//}
+
 		if searchTypeToDocType(svc.searchType) ==  DocType(result.Fields["doc_type"].(string)) {
 			results = append(results, result.Fields)
 		}
@@ -127,118 +203,79 @@ func (svc *Service) Fields() []string {
 	return fields
 }
 
-func (svc *Service) unmarshallJson(fileName string) ([]map[string]interface{}, error) {
+func (svc *Service) readFile(fileName string) ([]byte, error) {
 	jsonBytes, err := svc.fs.ReadFile(fileName)
 	if err != nil {
 		return nil, err
 	}
-	s := make([]map[string]interface{}, 0)
 
-	err = json.Unmarshal(jsonBytes, &s)
-	if err != nil {
-		return nil, err
-	}
-	return s, nil
+	return jsonBytes, nil
 }
 
-func (svc *Service) buildUserIndex(index bleve.Index, indexMapping *mapping.IndexMappingImpl) (bleve.Index, error) {
+func (svc *Service) unmarshalUsers() ([]User, error) {
 	fileName := "./data/users.json"
 
-	items, err := svc.unmarshallJson(fileName)
+	b, err := svc.readFile(fileName)
 	if err != nil {
 		return nil, err
 	}
 
-	keywordMapping := bleve.NewTextFieldMapping()
-	keywordMapping.Analyzer = keyword.Name
-
-	textFieldMapping := bleve.NewTextFieldMapping()
-	textFieldMapping.Analyzer = "en"
-
-	userMapping := bleve.NewDocumentMapping()
-
-	for _, f := range USER_FIELDS {
-		userMapping.AddFieldMappingsAt(f, textFieldMapping)
+	var users []User
+	if err = json.Unmarshal(b, &users); err != nil {
+		return nil, err
 	}
 
-	indexMapping.AddDocumentMapping("user", userMapping)
-
-	intFieldsToConvert := []string{"_id", "organization_id"}
-	boolFieldsToConvert := []string{"active", "verified", "shared", "suspended"}
-
-	for _, item := range items {
-		item = convertIntFieldsToText(item, intFieldsToConvert)
-		item = convertBoolFieldsToText(item, boolFieldsToConvert)
-
-		item["doc_type"] = "user"
-		index.Index(uuid.NewString(), item)
+	for _, user := range users {
+		user.DocType = USER_DOC_TYPE
 	}
-	return index, nil
+	return users, nil
 }
 
-func (svc *Service) buildOrganizationIndex(index bleve.Index, indexMapping *mapping.IndexMappingImpl) (bleve.Index, error) {
+func (svc *Service) unmarshalOrganizations() ([]Organization, error) {
 	fileName := "./data/organizations.json"
 
-	items, err := svc.unmarshallJson(fileName)
+	b, err := svc.readFile(fileName)
 	if err != nil {
 		return nil, err
 	}
 
-	textFieldMapping := bleve.NewTextFieldMapping()
-	textFieldMapping.Analyzer = "en"
-
-	orgMapping := bleve.NewDocumentMapping()
-
-	for _, f := range ORGANIZATION_FIELDS {
-		orgMapping.AddFieldMappingsAt(f, textFieldMapping)
+	var orgs []Organization
+	if err = json.Unmarshal(b, &orgs); err != nil {
+		return nil, err
 	}
 
-	indexMapping.AddDocumentMapping("organization", orgMapping)
-
-	intFieldsToConvert := []string{"_id"}
-	boolFieldsToConvert := []string{"shared_tickets"}
-
-	for _, item := range items {
-		item = convertIntFieldsToText(item, intFieldsToConvert)
-		item = convertBoolFieldsToText(item, boolFieldsToConvert)
-
-		item["doc_type"] = "organization"
-		index.Index(uuid.NewString(), item)
+	for _, org := range orgs {
+		org.DocType = ORGANIZATION_DOC_TYPE
 	}
-	return index, nil
+	return orgs, nil
 }
 
-func (svc *Service) buildTicketIndex(index bleve.Index, indexMapping *mapping.IndexMappingImpl) (bleve.Index, error) {
+func (svc *Service) unmarshalTickets() ([]Ticket, error) {
 	fileName := "./data/tickets.json"
 
-	items, err := svc.unmarshallJson(fileName)
+	b, err := svc.readFile(fileName)
 	if err != nil {
 		return nil, err
 	}
 
-	textFieldMapping := bleve.NewTextFieldMapping()
-	textFieldMapping.Analyzer = keyword.Name
-
-	ticketMapping := bleve.NewDocumentMapping()
-
-	for _, f := range TICKET_FIELDS {
-		ticketMapping.AddFieldMappingsAt(f, textFieldMapping)
+	var tickets []Ticket
+	if err = json.Unmarshal(b, &tickets); err != nil {
+		return nil, err
 	}
 
-	indexMapping.AddDocumentMapping("ticket", ticketMapping)
-
-	intFieldsToConvert := []string{"organization_id", "submitter_id", "assignee_id"}
-	boolFieldsToConvert := []string{"has_incidents"}
-
-	for _, item := range items {
-		item["_id"] = item["_id"].(string)
-		item = convertIntFieldsToText(item, intFieldsToConvert)
-		item = convertBoolFieldsToText(item, boolFieldsToConvert)
-
-		item["doc_type"] = "ticket"
-		index.Index(uuid.NewString(), item)
+	for _, ticket := range tickets {
+		ticket.DocType =  TICKET_DOC_TYPE
 	}
-	return index, nil
+	return tickets, nil
+}
+
+func buildUserGraph(user User, organizations []Organization, tickets []Ticket) User {
+	for _, org := range organizations {
+		if user.OrganizationId == org.Id {
+			user.Organization = org
+		}
+	}
+	return user
 }
 
 func convertBoolFieldsToText(m map[string]interface{}, fieldNamesToConvert []string) map[string]interface{} {
