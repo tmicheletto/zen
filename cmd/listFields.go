@@ -17,9 +17,11 @@ package cmd
 
 import (
 	"fmt"
-
+	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
+	"github.com/tmicheletto/zen/internal/file"
 	"github.com/tmicheletto/zen/internal/search"
+	"log"
 )
 
 // listFieldsCmd represents the listFields command
@@ -33,8 +35,24 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		svc := new(search.Service)
-		fmt.Println(svc.ListFields())
+		searchTypePrompt := promptui.Select{
+			Label: "What would you like to search for?",
+			Items: []string{string(search.USER_SEARCH), string(search.TICKET_SEARCH), string(search.ORGANIZATION_SEARCH)},
+		}
+		_, searchType, err := searchTypePrompt.Run()
+		if err != nil {
+			log.Fatal("Prompt failed %v\n", err)
+			return
+		}
+
+		fs := file.New()
+		svc := search.New(fs)
+		err = svc.Init(search.Type(searchType))
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+		fmt.Println(svc.Fields())
 	},
 }
 

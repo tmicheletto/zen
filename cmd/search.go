@@ -17,21 +17,14 @@ package cmd
 
 import (
 	"fmt"
-	"io/ioutil"
+	"github.com/tmicheletto/zen/internal/file"
 	"log"
 
 	"github.com/manifoldco/promptui"
-	"github.com/pkg/errors"
 	"github.com/tmicheletto/zen/internal/search"
 
 	"github.com/spf13/cobra"
 )
-
-type FileService struct{}
-
-func (svc *FileService) ReadFile(fileName string) ([]byte, error) {
-	return ioutil.ReadFile(fileName)
-}
 
 // searchCmd represents the search command
 var searchCmd = &cobra.Command{
@@ -44,12 +37,12 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fs := &FileService{}
+		fs := file.New()
 		svc := search.New(fs)
 
 		searchTypePrompt := promptui.Select{
 			Label: "What would you like to search for?",
-			Items: []string{search.USER_SEARCH, search.TICKET_SEARCH, search.ORGANIZATION_SEARCH},
+			Items: []string{string(search.USER_SEARCH), string(search.TICKET_SEARCH), string(search.ORGANIZATION_SEARCH)},
 		}
 		_, searchType, err := searchTypePrompt.Run()
 		if err != nil {
@@ -57,25 +50,18 @@ to quickly create a Cobra application.`,
 			return
 		}
 
-		err = svc.Init(searchType)
+		err = svc.Init(search.Type(searchType))
 		if err != nil {
 			log.Fatal(err)
 			return
 		}
 
-		validate := func(input string) error {
-			if len(input) == 0 {
-				return errors.New("You must enter a value")
-			}
-			return nil
+		searchTermPrompt := promptui.Select{
+			Label: "Search term",
+			Items: svc.Fields(),
 		}
 
-		searchTermPrompt := promptui.Prompt{
-			Label:    "Search term",
-			Validate: validate,
-		}
-
-		searchTerm, err := searchTermPrompt.Run()
+		_, searchTerm, err := searchTermPrompt.Run()
 		if err != nil {
 			log.Fatal(err)
 			return
@@ -83,7 +69,6 @@ to quickly create a Cobra application.`,
 
 		searchValuePrompt := promptui.Prompt{
 			Label:    "Search value",
-			Validate: validate,
 		}
 		searchValue, err := searchValuePrompt.Run()
 		if err != nil {
@@ -91,12 +76,16 @@ to quickly create a Cobra application.`,
 			return
 		}
 
-		result, err := svc.Search(searchTerm, searchValue)
+		results, err := svc.Search(searchTerm, searchValue)
 		if err != nil {
 			log.Fatal(err)
 			return
 		}
-		fmt.Println(result)
+
+		for i:=0; i < 10 && i <len(results); i++ {
+			result := results[i]
+			fmt.Printf("Result %d\n%v\n", i, result)
+		}
 	},
 }
 
