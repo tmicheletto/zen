@@ -24,6 +24,7 @@ import (
 	"github.com/tmicheletto/zen/internal/search"
 
 	"github.com/spf13/cobra"
+	"github.com/jedib0t/go-pretty/v6/list"
 )
 
 // searchCmd represents the search command
@@ -58,7 +59,7 @@ to quickly create a Cobra application.`,
 
 		searchTermPrompt := promptui.Select{
 			Label: "Search term",
-			Items: svc.Fields(),
+			Items: svc.ListFields(),
 		}
 
 		_, searchTerm, err := searchTermPrompt.Run()
@@ -82,10 +83,18 @@ to quickly create a Cobra application.`,
 			return
 		}
 
+		l := list.NewWriter()
+
 		for i:=0; i < 10 && i <len(results); i++ {
 			result := results[i]
-			fmt.Printf("Result %d\n%v\n", i, result)
+			l.AppendItem(fmt.Sprintf("Result %d", i))
+			l.Indent()
+			for k, v := range result {
+				l.AppendItem(fmt.Sprintf("%s: %v", k, v))
+			}
+			l.UnIndent()
 		}
+		fmt.Println(l.Render())
 	},
 }
 

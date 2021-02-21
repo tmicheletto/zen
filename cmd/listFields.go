@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/jedib0t/go-pretty/v6/list"
 	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
 	"github.com/tmicheletto/zen/internal/file"
@@ -52,7 +53,12 @@ to quickly create a Cobra application.`,
 			log.Fatal(err)
 			return
 		}
-		fmt.Println(svc.Fields())
+
+		l := list.NewWriter()
+		for _, f := range svc.ListFields() {
+			l.AppendItem(f)
+		}
+		fmt.Println(l.Render())
 	},
 }
 
