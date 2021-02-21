@@ -1,10 +1,11 @@
 package search_test
 
 import (
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/tmicheletto/zen/internal/search"
-	"testing"
 )
 
 type mockFileService struct {
@@ -326,7 +327,7 @@ func TestListTicketFields(t *testing.T) {
 	if err != nil {
 		assert.Fail(t, err.Error())
 	}
-	assert.Equal(t, []string{"_id","url","external_id","name","alias","created_at","active","shared","verified","locale","timezone","last_login_at","email","phone","signature","organization_id","tags","suspended","role"}, result)
+	assert.Equal(t, []string{"_id", "url", "external_id", "name", "alias", "created_at", "active", "shared", "verified", "locale", "timezone", "last_login_at", "email", "phone", "signature", "organization_id", "tags", "suspended", "role"}, result)
 }
 
 func TestListOrganizationFields(t *testing.T) {
@@ -346,5 +347,5 @@ func TestListOrganizationFields(t *testing.T) {
 	if err != nil {
 		assert.Fail(t, err.Error())
 	}
-	assert.Equal(t, []string{"_id","url","external_id","name","domain_names","created_at","details","shared_tickets","tags"}, result)
+	assert.Equal(t, []string{"_id", "url", "external_id", "name", "domain_names", "created_at", "details", "shared_tickets", "tags"}, result)
 }

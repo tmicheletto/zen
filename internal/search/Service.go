@@ -3,12 +3,13 @@ package search
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
+
 	"github.com/blevesearch/bleve"
 	"github.com/blevesearch/bleve/analysis/analyzer/keyword"
 	"github.com/blevesearch/bleve/analysis/lang/en"
 	"github.com/blevesearch/bleve/mapping"
 	"github.com/google/uuid"
-	"reflect"
 )
 
 type Type string
